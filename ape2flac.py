@@ -6,6 +6,9 @@
 import os,sys,getopt,subprocess
 from collections import namedtuple
 import re
+from mutagen.wave import WAVE
+from mutagen.apev2 import APEv2
+import chardet
 from chardet.universaldetector import UniversalDetector
 
 help_txt = '''
@@ -28,10 +31,30 @@ Vorbis comment specification：https://xiph.org/vorbis/doc/v-comment.html
 cueprint script reference：https://www.xuebuyuan.com/105556.html?mobile=1
 '''
 
-Music = namedtuple('Music',['artist','album','tranknum','title']) #具名元组定义音乐
+Music = namedtuple('Music',['artist','album','tracknum','title']) #具名元组定义音乐
 del_flag = False
 notrans_flag = False
 overwrite_flag = False
+detector = UniversalDetector()
+main_encode = "gbk"
+common_enconding = ["shift_jis", "cp932", "euc-jp", "big5"]
+
+import struct
+
+def rawbytes(s):
+    """Convert a string to raw bytes without encoding"""
+    outlist = []
+    for cp in s:
+        num = ord(cp)
+        if num < 255:
+            outlist.append(struct.pack('B', num))
+        elif num < 65535:
+            outlist.append(struct.pack('>H', num))
+        else:
+            b = (num & 0xFF0000) >> 16
+            H = num & 0xFFFF
+            outlist.append(struct.pack('>bH', b, H))
+    return b''.join(outlist)
 
 def Validate_char(chname): #非法字符转换为_,文件名不允许出现
     #rstr1 = r"[\/\\\:\*\?\"\<\>\|\(\)\']"  # '/ \ : * ? " < > |'
@@ -47,15 +70,47 @@ def Validate_filename(chname):  #命令行或者文件名中转义
 def Exec(cmd): #执行shell命令
     print(cmd)
     try:
+        result_bytes = subprocess.check_output(cmd, text=False,shell=True)
+        result = guess_encoding_and_convert_to_utf_8(result_bytes)
+        print(result)
+        return 0
+    except subprocess.CalledProcessError as grepexc:
+        print("error code", grepexc.returncode, grepexc.output)
+        return grepexc.returncode
+    except Exception as e:
+        print(e)
+        return 1
+
+def guess_encoding_and_convert_to_utf_8(data):
+    result = chardet.detect(data)
+    encoding = result["encoding"]
+    encodings = [main_encode,encoding]
+    encodings.extend(common_enconding)
+    output_str = None
+    for encode in encodings:
+        try:
+            output_str = data.decode(encode)
+            break
+        except Exception as e:
+            print(e)
+    return output_str
+
+
+def ExecAndGetOutput(cmd): #执行shell命令
+    print(cmd)
+    try:
         (status,output) = subprocess.getstatusoutput(cmd)
     except UnicodeDecodeError:
         print("UnicodeDecodeError......") #有时候会返回错误的unicode
         status = 100
+        result_bytes = subprocess.check_output(cmd, text=False,shell=True)
+        result = guess_encoding_and_convert_to_utf_8(result_bytes)
+        return status,result
     if status !=0:
         print("error code:"+str(status))
     else:
         print("...ok")
-    return status
+    return status,output
 
 def Uncompress(file): #解压rar，del_flag = True 解压后删除原文件
     global del_flag
@@ -77,7 +132,39 @@ def Uncompress(file): #解压rar，del_flag = True 解压后删除原文件
                 os.remove(file)
 
 def Convert_utf8(file): #转换编码为utf8
-    Exec('enca -L zh_CN -x UTF-8 '+ Validate_filename(file))
+    detector.reset()
+    for line in open(file, 'rb'):
+        detector.feed(line)
+        if detector.done: break
+    detector.close()
+    print(detector.result)
+    encoding = detector.result["encoding"]
+    # with open(file, 'r', encoding=encoding) as f:
+    #     text = f.read()
+    # with open(file, 'w', encoding='utf8') as f:
+    #     f.write(text)
+    encodings = [main_encode,encoding]
+    encodings.extend(common_enconding)
+    result = None
+    if not result:
+        for encode in encodings:
+            result = try_convert(file, encode)
+            if result:
+                break
+    # Exec('enca -L zh_CN -x UTF-8 '+ Validate_filename(file))
+
+def try_convert(file,encoding):
+    try:
+        with open(file, 'r', encoding=encoding) as f:
+            text = f.read()
+        with open(file, 'w', encoding='utf8') as f:
+            f.write(text)
+        return True
+    except Exception as e:
+        print(e)
+        return False
+
+
 
 def Backup_file(file):#复制文件生成.cue.bak1-99
     for i in range(100):
@@ -117,10 +204,10 @@ def get_cue_info(cuefile):#获取cue文件的信息
             print("cueprint error in parse album of "+cuefile)
             malbum = "" 
         try:
-            mtranknum  = os.popen("cueprint -n"+str(id3count)+" -t '%02n' "+cuefile).read()
+            mtracknum  = os.popen("cueprint -n"+str(id3count)+" -t '%02n' "+cuefile).read()
         except UnicodeDecodeError:
             print("cueprint error in parse tranknum of "+cuefile)
-            mtranknum = ""                             
+            mtracknum = ""
         try:
             mtitle  = os.popen("cueprint -n"+str(id3count)+" -t '%t' "+cuefile).read() 
         except UnicodeDecodeError:
@@ -137,7 +224,7 @@ def get_cue_info(cuefile):#获取cue文件的信息
         t_music = Music(
         artist = martist,
         album  = malbum,
-        tranknum  = mtranknum,
+        tracknum  = mtracknum,
         title  = mtitle
         )
         '''
@@ -161,7 +248,7 @@ def Set_cue_flac(file,cuefile):#设置id3v2到flac文件
     for tracknum in range(len(tracknames)):
         Write_id3v2(file+"-"+('0'+str(tracknum+1))[-2:]+'.flac','ARTIST='+tracknames[tracknum].artist)
         Write_id3v2(file+"-"+('0'+str(tracknum+1))[-2:]+'.flac','ALBUM='+tracknames[tracknum].album)
-        Write_id3v2(file+"-"+('0'+str(tracknum+1))[-2:]+'.flac','TRACKNUM='+tracknames[tracknum].tranknum)
+        Write_id3v2(file+"-"+('0'+str(tracknum+1))[-2:]+'.flac','TRACKNUMBER='+tracknames[tracknum].tracknum)
         Write_id3v2(file+"-"+('0'+str(tracknum+1))[-2:]+'.flac','TITLE='+tracknames[tracknum].title)
 
 def Convert_flac(file): #转换音频文件为flac，del_flag = True 解压后删除原文件
@@ -199,20 +286,46 @@ def Convert_flac(file): #转换音频文件为flac，del_flag = True 解压后�
         if Exec('shntool split -t '+Validate_filename(filename)+'-%n -f ' + Validate_filename(cuefile)+' -o flac -O '+overwrite+' '+Validate_filename(file)+' -d '+Validate_filename(os.path.dirname(file))) == 0:
             success_flag = True
         else:
-            if overwrite_flag == False:
-             success_flag = True # overwrite==never 也会返回错误
-            #flac文件写入id[3]v2
-            Set_cue_flac(os.path.split(fname)[0]+os.sep+filename,cuefile)
+            print(f"Convert failed for {file}, skipping")
+            return
+        # if overwrite_flag == False:
+        #      success_flag = True # overwrite==never 也会返回错误
+        #flac文件写入id[3]v2
+        Set_cue_flac(os.path.split(fname)[0]+os.sep+filename,cuefile)
     elif os.path.splitext(file)[1] != '.flac' :#找不到cue文件,转换为单个文件
         if (overwrite_flag == True) or (os.path.exists(fname+'.flac') == False):
             # ffmpeg -i test.ape  test.flac
             if Exec('ffmpeg -y -i '+Validate_filename(file) + ' ' + Validate_filename(fname)+'.flac') == 0:
                 success_flag = True
         else:
-            success_flag = True 
-                
+            success_flag = True
+        if success_flag == True:
+            check_and_covert_id3v2(fname+'.flac')
+            add_additional_tags(file,fname+'.flac')
+    elif os.path.splitext(file)[1] == '.flac':  # debug
+        check_and_covert_id3v2(Validate_filename(file))
+
     if (del_flag) == True and (success_flag == True):
         os.remove(file)
+
+def add_additional_tags(file,target):
+    if os.path.splitext(file)[1] == '.wav':
+        disc_number = WAVE(file).get("TPOS")
+        if disc_number:
+            Write_id3v2(target,"DISCNUMBER="+str(disc_number))
+
+def check_and_covert_id3v2(file):#设置id3v2到flac文件
+    verify_flac_tag_encoding(file,"artist")
+    verify_flac_tag_encoding(file,"album")
+    verify_flac_tag_encoding(file,"TRACKNUMBER")
+    verify_flac_tag_encoding(file,"title")
+
+def verify_flac_tag_encoding(file,tag):
+    status,output = ExecAndGetOutput(f"metaflac --no-utf8-convert --show-tag={tag} {Validate_filename(file)}")
+    if status == 100 and output:
+        Exec(f"metaflac --no-utf8-convert --remove-tag={tag} {Validate_filename(file)}")
+        Write_id3v2(file,output.strip())
+
 
 def Convert_ape2flac(file):#直接ape转flac，del_flag = True 解压后删除原文件
     global del_flag
@@ -260,10 +373,8 @@ def main(argv):
         print(help_txt)
         sys.exit()
 
-    import pydevd_pycharm
-    pydevd_pycharm.settrace('192.168.8.105', port=9999, stdoutToServer=True, stderrToServer=True)
     #检查需要安装的软件包
-    cmds = ('ffmpeg -version','flac -version','shntool -v','unrar -v','enca -v','sed --version','metaflac --version','cueprint --version')
+    cmds = ('ffmpeg -version','flac -version','shntool -v','unrar --help','enca -v','sed --version','metaflac --version','cueprint --version')
     for cmd in cmds:
         if Exec(cmd) != 0:
             print("one of cmomand is not run correct,run ape2flac.py -h for help")
@@ -295,7 +406,8 @@ def main(argv):
                 file_ext = os.path.splitext(file)[1].lower() #文件后缀
                 #if file_ext in ('.ape','.flac','.wav','.m4a','.mp3','.wv'): #暂时不转换m4a和mp3，转换结果太大
                 if file_ext in ('.flac','.wav','.wv'): #找到需要处理文件
-                    Convert_flac(os.path.join(path,file))    
+                    Convert_flac(os.path.join(path,file))
+
             print("leave "+path+" Convert done.")
         #exit
         sys.exit(0)
