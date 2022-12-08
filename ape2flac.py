@@ -100,11 +100,13 @@ def ExecAndGetOutput(cmd): #执行shell命令
     print(cmd)
     try:
         (status,output) = subprocess.getstatusoutput(cmd)
+        print(output)
     except UnicodeDecodeError:
         print("UnicodeDecodeError......") #有时候会返回错误的unicode
         status = 100
         result_bytes = subprocess.check_output(cmd, text=False,shell=True)
         result = guess_encoding_and_convert_to_utf_8(result_bytes)
+        print(result)
         return status,result
     if status !=0:
         print("error code:"+str(status))
@@ -302,8 +304,8 @@ def Convert_flac(file): #转换音频文件为flac，del_flag = True 解压后�
         if success_flag == True:
             check_and_covert_id3v2(fname+'.flac')
             add_additional_tags(file,fname+'.flac')
-    elif os.path.splitext(file)[1] == '.flac':  # debug
-        check_and_covert_id3v2(Validate_filename(file))
+    # elif os.path.splitext(file)[1] == '.flac':  # debug
+    #     check_and_covert_id3v2(fname+'.flac')
 
     if (del_flag) == True and (success_flag == True):
         os.remove(file)
@@ -312,7 +314,7 @@ def add_additional_tags(file,target):
     if os.path.splitext(file)[1] == '.wav':
         disc_number = WAVE(file).get("TPOS")
         if disc_number:
-            Write_id3v2(target,"DISCNUMBER="+str(disc_number))
+            Write_id3v2(target,"Discnumber="+str(disc_number))
 
 def check_and_covert_id3v2(file):#设置id3v2到flac文件
     verify_flac_tag_encoding(file,"artist")
@@ -320,9 +322,10 @@ def check_and_covert_id3v2(file):#设置id3v2到flac文件
     verify_flac_tag_encoding(file,"TRACKNUMBER")
     verify_flac_tag_encoding(file,"title")
 
-def verify_flac_tag_encoding(file,tag):
+
+def verify_flac_tag_encoding(file,tag,force = False):
     status,output = ExecAndGetOutput(f"metaflac --no-utf8-convert --show-tag={tag} {Validate_filename(file)}")
-    if status == 100 and output:
+    if (status == 100 and output) or (output and force):
         Exec(f"metaflac --no-utf8-convert --remove-tag={tag} {Validate_filename(file)}")
         Write_id3v2(file,output.strip())
 
