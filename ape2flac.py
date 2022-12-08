@@ -6,7 +6,7 @@
 import os,sys,getopt,subprocess
 from collections import namedtuple
 import re
-
+from chardet.universaldetector import UniversalDetector
 
 help_txt = '''
 ape2flac.py -d <directory> -h -e -n -o
@@ -14,11 +14,11 @@ translate music file('.ape','.flac','.wav','.wv') into flac formate and split  m
 note:script must run in python3
 -d --directory work directory
 -h --help this help
--e --earse original compress and music file
--n --notrans do not translate music file,uncompress and convert utf8 only
+-e --erase original compress and music file
+-n --notrans do not convert music file,uncompress and convert utf8 only
 -o --overwrite will overwrite existing files, otherwise it will skip existing files
-this script search gived dfirectory and do this job:
-1,uncompress .rar file with diregtory
+this script search given directory and do this job:
+1,uncompress .rar file with directory
 2,translate .txt and .cue file into encode UTF-8,older file weill backup like xxx.cue.bak0
 3,translate '.ape','.flac','.wav','.wv' file into .flac file(split one track file to multi track if have .cue file in same directory as same filename) and write id[3]v2 to flac file
 script need som installed pacakage,for example in archlinux:pacman -S ffmpg flac shntool unzip unrar enca sed cuetools metaflac
@@ -258,8 +258,10 @@ def main(argv):
             overwrite_flag = True    
     if target_dir == "":
         print(help_txt)
-        sys.exit()        
+        sys.exit()
 
+    import pydevd_pycharm
+    pydevd_pycharm.settrace('192.168.8.105', port=9999, stdoutToServer=True, stderrToServer=True)
     #检查需要安装的软件包
     cmds = ('ffmpeg -version','flac -version','shntool -v','unrar -v','enca -v','sed --version','metaflac --version','cueprint --version')
     for cmd in cmds:
